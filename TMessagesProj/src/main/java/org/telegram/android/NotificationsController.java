@@ -373,6 +373,7 @@ public class NotificationsController {
                     .setContentTitle(name)
                     .setSmallIcon(R.drawable.notification)
                     .setAutoCancel(true)
+                    .setNumber(total_unread_count)
                     .setContentIntent(contentIntent);
 
             String lastMessage = null;
@@ -419,7 +420,7 @@ public class NotificationsController {
             }
 
             if (photoPath != null) {
-                BitmapDrawable img = ImageLoader.getInstance().getImageFromMemory(photoPath, null, "50_50");
+                BitmapDrawable img = ImageLoader.getInstance().getImageFromMemory(photoPath, null, "50_50", null);
                 if (img != null) {
                     mBuilder.setLargeIcon(img.getBitmap());
                 }
@@ -577,6 +578,7 @@ public class NotificationsController {
                 }
                 pushMessagesDict.put(messageObject.messageOwner.id, messageObject);
                 pushMessages.add(0, messageObject);
+                FileLog.e("tmessages", "processNewMessages add dialog = " + dialog_id);
             }
         }
 
@@ -596,50 +598,41 @@ public class NotificationsController {
         }
     }
 
-    public void processDialogsUpdateRead(final HashMap<Long, Integer> dialogsToUpdate, boolean replace) {
+    public void processDialogsUpdateRead(final HashMap<Long, Integer> dialogsToUpdate) {
         int old_unread_count = total_unread_count;
         SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("Notifications", Context.MODE_PRIVATE);
         for (HashMap.Entry<Long, Integer> entry : dialogsToUpdate.entrySet()) {
             long dialog_id = entry.getKey();
 
             int notify_override = preferences.getInt("notify2_" + dialog_id, 0);
-            boolean isChat = (int)dialog_id < 0;
-            Integer currentCount = pushDialogs.get(dialog_id);
-            boolean canAddValue = !(notify_override == 2 || (!preferences.getBoolean("EnableAll", true) || isChat && !preferences.getBoolean("EnableGroup", true)) && notify_override == 0);
+            boolean canAddValue = !(notify_override == 2 || (!preferences.getBoolean("EnableAll", true) || ((int)dialog_id < 0) && !preferences.getBoolean("EnableGroup", true)) && notify_override == 0);
 
+            Integer currentCount = pushDialogs.get(dialog_id);
             Integer newCount = entry.getValue();
-            if (replace || newCount < 0) {
-                if (newCount < 0) {
-                    newCount *= -1;
+            FileLog.e("tmessages", "processDialogsUpdateRead dialog = " + dialog_id + " newCount = " + newCount + " oldCount = " + currentCount);
+            if (newCount < 0) {
+                if (currentCount == null) {
+                    continue;
                 }
-                if (currentCount != null) {
-                    total_unread_count -= currentCount;
-                }
-                if (newCount == 0) {
-                    pushDialogs.remove(dialog_id);
-                    for (int a = 0; a < pushMessages.size(); a++) {
-                        MessageObject messageObject = pushMessages.get(a);
-                        if (messageObject.getDialogId() == dialog_id) {
-                            pushMessages.remove(a);
-                            a--;
-                            pushMessagesDict.remove(messageObject.messageOwner.id);
-                            popupMessages.remove(messageObject);
-                        }
+                newCount = currentCount + newCount;
+            }
+            if (currentCount != null) {
+                total_unread_count -= currentCount;
+            }
+            if (newCount == 0) {
+                pushDialogs.remove(dialog_id);
+                for (int a = 0; a < pushMessages.size(); a++) {
+                    MessageObject messageObject = pushMessages.get(a);
+                    if (messageObject.getDialogId() == dialog_id) {
+                        pushMessages.remove(a);
+                        a--;
+                        pushMessagesDict.remove(messageObject.messageOwner.id);
+                        popupMessages.remove(messageObject);
                     }
-                } else if (canAddValue) {
-                    total_unread_count += newCount;
-                    pushDialogs.put(dialog_id, newCount);
                 }
             } else if (canAddValue) {
-                if (newCount > 2000000) {
-                    newCount = 2000000 - newCount;
-                }
-                if (currentCount == null) {
-                    currentCount = 0;
-                }
-                currentCount += newCount;
                 total_unread_count += newCount;
-                pushDialogs.put(dialog_id, currentCount);
+                pushDialogs.put(dialog_id, newCount);
             }
         }
         if (old_unread_count != total_unread_count) {
@@ -656,6 +649,17 @@ public class NotificationsController {
         MessagesController.getInstance().putChats(chats, true);
         MessagesController.getInstance().putEncryptedChats(encryptedChats, true);
 
+        pushDialogs.clear();
+        pushMessages.clear();
+        pushMessagesDict.clear();
+        total_unread_count = 0;
+        SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("Notifications", Context.MODE_PRIVATE);
+        for (HashMap.Entry<Long, Integer> entry : dialogs.entrySet()) {
+            pushDialogs.put(entry.getKey(), entry.getValue());
+            total_unread_count += entry.getValue();
+            FileLog.e("tmessages", "processLoadedUnreadMessages dialog = " + entry.getKey() + " count = " + entry.getValue());
+        }
+        FileLog.e("tmessages", "processLoadedUnreadMessages total = " + total_unread_count + " messages = " + messages.size());
         if (messages != null) {
             for (TLRPC.Message message : messages) {
                 if (pushMessagesDict.containsKey(message.id)) {
@@ -670,21 +674,12 @@ public class NotificationsController {
                 pushMessages.add(0, messageObject);
             }
         }
-
-        pushDialogs.clear();
-        total_unread_count = 0;
-        SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("Notifications", Context.MODE_PRIVATE);
-        for (HashMap.Entry<Long, Integer> entry : dialogs.entrySet()) {
-            pushDialogs.put(entry.getKey(), entry.getValue());
-            total_unread_count += entry.getValue();
-        }
         if (total_unread_count == 0) {
-            pushMessages.clear();
-            pushMessagesDict.clear();
             popupMessages.clear();
             showOrUpdateNotification(false);
             NotificationCenter.getInstance().postNotificationName(NotificationCenter.pushMessagesUpdated);
         }
+
         if (preferences.getBoolean("badgeNumber", true)) {
             setBadge(ApplicationLoader.applicationContext, total_unread_count);
         }
